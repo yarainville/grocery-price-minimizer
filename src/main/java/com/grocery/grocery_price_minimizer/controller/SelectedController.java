@@ -19,7 +19,9 @@ public class SelectedController {
     @GetMapping("/selected")
     public List<Map<String, Object>> getSelected() {
         return jdbc.queryForList(
-                "SELECT id, store, title, url, created_at FROM selected_products ORDER BY created_at DESC"
+                "SELECT id, basket_item, store, title, url, price_cents, created_at FROM selected_products ORDER BY created_at DESC"
         );
     }
 }
+
+
