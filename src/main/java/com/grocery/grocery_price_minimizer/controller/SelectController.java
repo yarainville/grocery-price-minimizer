@@ -40,6 +40,35 @@ public class SelectController {
         return Map.of("status", "saved");
     }
 
+    @PostMapping("/select/bulk")
+    public Map<String, Object> selectBulk(@RequestBody List<Map<String, Object>> items) {
+        int count = 0;
+
+        for (Map<String, Object> body : items) {
+            String basketItem = (String) body.get("basket_item");
+            String store = (String) body.get("store");
+            String title = (String) body.get("title");
+            String url = (String) body.get("url");
+
+            Integer priceCents = null;
+            Object pc = body.get("price_cents");
+            if (pc instanceof Number n) {
+                priceCents = n.intValue();
+            }
+
+            jdbc.update(
+                    """
+                    INSERT INTO selected_products
+                    (basket_item, store, title, url, price_cents)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    basketItem, store, title, url, priceCents
+            );
+            count++;
+        }
+
+        return Map.of("status", "saved", "count", count);
+    }
 
     @GetMapping("/cheapest")
     public List<Map<String, Object>> getCheapestPerStore() {
@@ -58,48 +87,6 @@ public class SelectController {
             """
         );
     }
-
-    @GetMapping("/best-store")
-    public Map<String, Object> bestStore(@RequestParam String basket) {
-        // basket="milk,eggs,bread" -> ["milk","eggs","bread"]
-        String[] items = basket.split(",");
-
-        // Build placeholders (?, ?, ?) depending on basket size
-        StringBuilder placeholders = new StringBuilder();
-        for (int i = 0; i < items.length; i++) {
-            if (i > 0) placeholders.append(", ");
-            placeholders.append("?");
-            items[i] = items[i].trim();
-        }
-
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                """
-                SELECT store, SUM(min_price) AS total_cents
-                FROM (
-                    SELECT store, basket_item, MIN(price_cents) AS min_price
-                    FROM selected_products
-                    WHERE price_cents IS NOT NULL
-                      AND basket_item IN (%s)
-                    GROUP BY store, basket_item
-                ) per_item
-                GROUP BY store
-                HAVING COUNT(*) = %d
-                ORDER BY total_cents ASC
-                LIMIT 1
-                """.formatted(placeholders, items.length),
-                (Object[]) items
-        );
-
-        if (rows.isEmpty()) {
-            return Map.of(
-                    "error", "No store has all items with prices yet",
-                    "basket", basket
-            );
-        }
-
-        return rows.get(0);
-    }
-
 
     @GetMapping("/total")
     public Map<String, Object> totalCheapestBasket() {
@@ -121,8 +108,8 @@ public class SelectController {
         return Map.of("total_cents", total);
     }
 
-    @GetMapping("/best-store-details")
-    public Map<String, Object> bestStoreDetails(@RequestParam String basket) {
+    @GetMapping("/best-store")
+    public Map<String, Object> bestStore(@RequestParam String basket) {
         String[] items = basket.split(",");
         for (int i = 0; i < items.length; i++) items[i] = items[i].trim();
 
@@ -158,24 +145,32 @@ public class SelectController {
         String store = (String) best.get(0).get("store");
         Number total = (Number) best.get(0).get("total_cents");
 
-        // For that store, fetch the cheapest chosen product per basket_item
         List<Map<String, Object>> chosen = jdbc.queryForList(
                 """
                 SELECT sp.basket_item, sp.store, sp.title, sp.url, sp.price_cents, sp.created_at
                 FROM selected_products sp
                 JOIN (
-                    SELECT basket_item, MIN(price_cents) AS min_price
-                    FROM selected_products
-                    WHERE price_cents IS NOT NULL
-                      AND store = ?
-                      AND basket_item IN (%s)
-                    GROUP BY basket_item
-                ) mins
-                ON sp.basket_item = mins.basket_item AND sp.price_cents = mins.min_price AND sp.store = ?
+                    SELECT t.basket_item, MAX(t.id) AS pick_id
+                    FROM selected_products t
+                    WHERE t.price_cents IS NOT NULL
+                      AND t.store = ?
+                      AND t.basket_item IN (%s)
+                      AND t.price_cents = (
+                          SELECT MIN(t2.price_cents)
+                          FROM selected_products t2
+                          WHERE t2.store = t.store
+                            AND t2.basket_item = t.basket_item
+                            AND t2.price_cents IS NOT NULL
+                      )
+                    GROUP BY t.basket_item
+                ) picks
+                  ON sp.id = picks.pick_id
                 ORDER BY sp.basket_item ASC
                 """.formatted(placeholders),
-                concatParams(store, items, store)
+                concatParams(store, items)
         );
+
+
 
         return Map.of(
                 "store", store,
@@ -184,13 +179,25 @@ public class SelectController {
         );
     }
 
-    // helper: build params = [store] + items + [store]
-    private Object[] concatParams(String store1, String[] items, String store2) {
-        Object[] params = new Object[items.length + 2];
-        params[0] = store1;
-        for (int i = 0; i < items.length; i++) params[i + 1] = items[i];
-        params[items.length + 1] = store2;
-        return params;
+    @GetMapping("/best-per-store")
+    public List<Map<String, Object>> bestPerStore(@RequestParam String item) {
+        return jdbc.queryForList(
+                """
+                SELECT sp.basket_item, sp.store, sp.title, sp.url, sp.price_cents, sp.created_at
+                FROM selected_products sp
+                JOIN (
+                    SELECT store, MIN(price_cents) AS min_price
+                    FROM selected_products
+                    WHERE basket_item = ?
+                      AND price_cents IS NOT NULL
+                    GROUP BY store
+                ) mins
+                ON sp.store = mins.store AND sp.price_cents = mins.min_price
+                WHERE sp.basket_item = ?
+                ORDER BY sp.store ASC
+                """,
+                item, item
+        );
     }
 
     @DeleteMapping("/reset")
@@ -198,6 +205,17 @@ public class SelectController {
         int deleted = jdbc.update("DELETE FROM selected_products");
         return Map.of("status", "deleted", "rows", deleted);
     }
+
+    // helper: build params = [store] + items + [store]
+    private Object[] concatParams(String store, String[] items) {
+        Object[] params = new Object[items.length + 1];
+        params[0] = store;
+        for (int i = 0; i < items.length; i++) params[i + 1] = items[i];
+        return params;
+    }
+
+
+
 
 
 
