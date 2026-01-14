@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 import java.util.Map;
@@ -19,15 +20,18 @@ public class SelectedController {
     }
 
     @GetMapping("/selected")
-    public List<Map<String, Object>> getSelected() {
+    public List<Map<String, Object>> getSelected(@RequestParam long basketId) {
         return jdbc.queryForList(
                 """
-                SELECT id, basket_item, store, title, url, price_cents, created_at
+                SELECT id, basket_id, basket_item, store, title, url, price_cents, created_at
                 FROM selected_products
+                WHERE basket_id = ?
                 ORDER BY created_at DESC
-                """
+                """,
+                basketId
         );
     }
+
 
     @DeleteMapping("/selected/{id}")
     public Map<String, Object> deleteOne(@PathVariable long id) {

@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grocery Price Minimizer</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        input, button, select {
+            padding: 8px;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button.danger {
+            background: #dc3545;
+        }
+        button.danger:hover {
+            background: #c82333;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .section {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .product-item, .basket-item {
+            border: 1px solid #eee;
+            padding: 10px;
+            margin: 5px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .store-listing {
+            background: #f9f9f9;
+            padding: 10px;
+            margin: 5px 0;
+        }
+        h2 {
+            margin-top: 0;
+        }
+        .best-store-result {
+            background: #d4edda;
+            padding: 15px;
+            margin: 10px 0;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        .warning {
+            background: #fff3cd;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ffc107;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function App() {
+        const [searchQuery, setSearchQuery] = useState('');
+        const [searchResults, setSearchResults] = useState([]);
+        const [basket, setBasket] = useState([]);
+        const [storeListings, setStoreListings] = useState([]);
+        const [selectedProduct, setSelectedProduct] = useState(null);
+        const [bestStore, setBestStore] = useState(null);
+        const [loading, setLoading] = useState(false);
+        const storeListingsRef = useRef(null);
+        const basketId = 1;
+
+        // Search products
+        const searchProducts = async () => {
+            const res = await fetch(`/products/search?q=${searchQuery}`);
+            const data = await res.json();
+            setSearchResults(data.products || []);
+        };
+
+        // Load basket
+        const loadBasket = async () => {
+            const res = await fetch(`/baskets/${basketId}/items`);
+            const data = await res.json();
+            setBasket(data);
+        };
+
+        // Check if product has prices
+        const checkProductPrices = async (productId) => {
+            const res = await fetch(`/store-products/product/${productId}`);
+            const data = await res.json();
+            return data.length > 0;
+        };
+
+        // Add to basket (only if prices exist)
+        const addToBasket = async (productId) => {
+            const hasPrices = await checkProductPrices(productId);
+
+            if (!hasPrices) {
+                alert('❌ Please add prices first! Click "Find in Stores" and enter at least one price.');
+                return;
+            }
+
+            await fetch(`/baskets/${basketId}/items`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ product_id: productId, quantity: 1 })
+            });
+            loadBasket();
+            alert('✅ Added to basket!');
+        };
+
+        // Delete from basket
+        const deleteFromBasket = async (itemId) => {
+            if (!confirm('Remove this item from basket?')) return;
+
+            await fetch(`/baskets/${basketId}/items/${itemId}`, {
+                method: 'DELETE'
+            });
+            loadBasket();
+        };
+
+        // Find in stores
+        const findInStores = async (productId, productName) => {
+            setLoading(true);
+            setSelectedProduct({ id: productId, name: productName });
+            setStoreListings([]); // Clear previous results
+
+            const res = await fetch(`/products/${productId}/find-in-stores`);
+            const data = await res.json();
+            setStoreListings(data.storeListings || []);
+            setLoading(false);
+
+            // Auto-scroll to store listings
+            setTimeout(() => {
+                storeListingsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
+        };
+
+        // Save price
+        const savePrice = async (productId, store, title, url, price) => {
+            if (!price || price <= 0) {
+                alert('❌ Please enter a valid price');
+                return;
+            }
+
+            const priceCents = Math.round(parseFloat(price) * 100);
+            await fetch('/store-products', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    product_id: productId,
+                    store: store,
+                    title: title,
+                    url: url,
+                    price_cents: priceCents
+                })
+            });
+
+            alert('✅ Price saved! You can now add this product to your basket.');
+        };
+
+        // Calculate best store
+        const calculateBestStore = async () => {
+            if (basket.length === 0) {
+                alert('❌ Basket is empty!');
+                return;
+            }
+
+            const res = await fetch(`/baskets/${basketId}/best-store`);
+            const data = await res.json();
+            setBestStore(data);
+        };
+
+        useEffect(() => {
+            loadBasket();
+        }, []);
+
+        return (
+            <div>
+                <h1>🛒 Grocery Price Minimizer</h1>
+
+                {/* Instructions */}
+                <div className="warning">
+                    <strong>How to use:</strong>
+                    <ol>
+                        <li>Search for a product (milk, eggs, etc.)</li>
+                        <li>Click "Find in Stores" to see where it's available</li>
+                        <li>Click store links to verify and see prices</li>
+                        <li>Enter price for at least ONE store and click "Save Price"</li>
+                        <li>Click "Add to Basket"</li>
+                        <li>Repeat for other products</li>
+                        <li>Click "Calculate Best Store" to see which store is cheapest!</li>
+                    </ol>
+                </div>
+
+                {/* Search Section */}
+                <div className="section">
+                    <h2>1. Search Products</h2>
+                    <input
+                        type="text"
+                        placeholder="Search (milk, eggs, quinoa...)"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && searchProducts()}
+                    />
+                    <button onClick={searchProducts}>Search</button>
+
+                    <div>
+                        {searchResults.map((product, i) => (
+                            <div key={i} className="product-item">
+                                <div>
+                                    <strong>{product.product_name}</strong>
+                                    {product.brand && ` - ${product.brand}`}
+                                    {product.quantity && ` (${product.quantity})`}
+                                </div>
+                                <div>
+                                    <button onClick={() => findInStores(product.id || product.barcode, product.product_name)}>
+                                        Find in Stores
+                                    </button>
+                                    <button onClick={() => addToBasket(product.id || product.barcode)}>
+                                        Add to Basket
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Store Listings Section */}
+                {loading && (
+                    <div className="loading">
+                        🔍 Searching stores... This may take a few seconds.
+                    </div>
+                )}
+
+                {selectedProduct && !loading && (
+                    <div className="section" ref={storeListingsRef}>
+                        <h2>2. Store Listings for: {selectedProduct?.name}</h2>
+
+                        {storeListings.length === 0 ? (
+                            <p className="warning">
+                                ⚠️ No store listings found. Google search returned no relevant results.
+                                You can still manually enter prices if you know them!
+                            </p>
+                        ) : (
+                            <>
+                                <p className="warning">⚠️ Click links to verify they're the correct product, then enter prices!</p>
+                                {storeListings.map((listing, i) => (
+                                    <div key={i} className="store-listing">
+                                        <strong>{listing.store}</strong>: {listing.title}
+                                        <br/>
+                                        <a href={listing.url} target="_blank" rel="noopener noreferrer">
+                                            Open in {listing.store} →
+                                        </a>
+                                        <br/>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            placeholder="Enter price ($)"
+                                            id={`price-${i}`}
+                                        />
+                                        <button onClick={() => {
+                                            const price = document.getElementById(`price-${i}`).value;
+                                            if (price) {
+                                                savePrice(selectedProduct.id, listing.store, listing.title, listing.url, price);
+                                            } else {
+                                                alert('❌ Please enter a price');
+                                            }
+                                        }}>
+                                            Save Price
+                                        </button>
+                                    </div>
+                                ))}
+                            </>
+                        )}
+
+                        {/* Manual price entry for stores not found */}
+                        <div style={{marginTop: '20px', padding: '10px', background: '#f0f0f0'}}>
+                            <strong>Can't find at a store? Enter manually:</strong>
+                            <br/>
+                            <select id="manual-store">
+                                <option value="Walmart">Walmart</option>
+                                <option value="Maxi">Maxi</option>
+                                <option value="Metro">Metro</option>
+                                <option value="IGA">IGA</option>
+                            </select>
+                            <input
+                                type="number"
+                                step="0.01"
+                                placeholder="Price ($)"
+                                id="manual-price"
+                            />
+                            <button onClick={() => {
+                                const store = document.getElementById('manual-store').value;
+                                const price = document.getElementById('manual-price').value;
+                                if (price) {
+                                    savePrice(
+                                        selectedProduct.id,
+                                        store,
+                                        selectedProduct.name,
+                                        'manual-entry',
+                                        price
+                                    );
+                                } else {
+                                    alert('❌ Please enter a price');
+                                }
+                            }}>
+                                Save Manual Price
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Basket Section */}
+                <div className="section">
+                    <h2>3. My Basket ({basket.length} items)</h2>
+                    <button onClick={loadBasket}>Refresh</button>
+                    <button onClick={calculateBestStore}>Calculate Best Store</button>
+
+                    {basket.length === 0 ? (
+                        <p>Basket is empty. Add products above!</p>
+                    ) : (
+                        basket.map((item, i) => (
+                            <div key={i} className="basket-item">
+                                <div>
+                                    <strong>{item.product_name}</strong>
+                                    {item.brand && ` - ${item.brand}`}
+                                    {item.product_quantity && ` (${item.product_quantity})`}
+                                    <br/>
+                                    <small>Qty: {item.quantity}</small>
+                                </div>
+                                <button
+                                    className="danger"
+                                    onClick={() => deleteFromBasket(item.id)}
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                        ))
+                    )}
+                </div>
+
+                {/* Best Store Result */}
+                {bestStore && !bestStore.error && (
+                    <div className="best-store-result">
+                        🏆 Best Store: {bestStore.bestStore}
+                        <br/>
+                        Total: ${bestStore.totalDollars?.toFixed(2)}
+                        <br/>
+                        <small>
+                            All stores compared: {Object.entries(bestStore.allStoreTotals || {}).map(([store, cents]) =>
+                                `${store}: $${(cents/100).toFixed(2)}`
+                            ).join(', ')}
+                        </small>
+                    </div>
+                )}
+
+                {bestStore?.error && (
+                    <div className="section error">
+                        ❌ {bestStore.error}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+</script>
+</body>
+</html>
